@@ -1,7 +1,7 @@
-
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import HTTPException
 import pandas as pd
 from io import BytesIO
 from openpyxl import load_workbook
@@ -20,10 +20,27 @@ app.add_middleware(
 )
 @app.post("/comparar-excel")
 async def comparar_archivos(file_actual: UploadFile = File(...), file_pasado: UploadFile = File(...)):
-    # Leer CSVs en DataFrames
-    # Usamos sep=None para autodetectar delimitador
-    df_actual = pd.read_csv(file_actual.file, sep=None, engine="python")
-    df_pasado = pd.read_csv(file_pasado.file, sep=None, engine="python")
+    content1 = await file_actual.read()
+    content2 = await file_pasado.read()
+
+    # Detectar extensión
+    ext1 = file_actual.filename.split(".")[-1].lower()
+    ext2 = file_pasado.filename.split(".")[-1].lower()
+
+    # Cargar con pandas según el tipo
+    if ext1 == "csv":
+        df_actual = pd.read_csv(BytesIO(content1))
+    elif ext1 in ["xls", "xlsx"]:
+        df_actual = pd.read_excel(BytesIO(content1))
+    else:
+        raise HTTPException(status_code=400, detail=f"Formato no soportado: {file_actual.filename}")
+
+    if ext2 == "csv":
+        df_pasado = pd.read_csv(BytesIO(content2))
+    elif ext2 in ["xls", "xlsx"]:
+        df_pasado = pd.read_excel(BytesIO(content2))
+    else:
+        raise HTTPException(status_code=400, detail=f"Formato no soportado: {file_pasado.filename}")
 
     # Normalizar nombres de columnas
     df_actual.columns = df_actual.columns.str.lower().str.strip()
