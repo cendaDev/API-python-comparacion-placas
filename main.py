@@ -6,7 +6,7 @@ import pandas as pd
 from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
-
+import csv
 #python -m uvicorn main:app --reload
 #pip install fastapi uvicorn pandas openpyxl
 app = FastAPI()
@@ -18,6 +18,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def detectar_separador_robusto(content: bytes) -> str:
+    """Detecta el separador y valida que las columnas se lean correctamente."""
+    sample = content.decode('utf-8', errors='ignore')
+    posibles = [',', ';', '\t', '|']
+
+    try:
+        dialect = csv.Sniffer().sniff(sample[:2048])
+        return dialect.delimiter
+    except Exception:
+        pass  # continúa con detección manual
+
+    for sep in posibles:
+        try:
+            df_test = pd.read_csv(BytesIO(content), sep=sep, nrows=5)
+            if len(df_test.columns) > 1:
+                return sep
+        except Exception:
+            continue
+    return ','  # fallback
+
 @app.post("/comparar-excel")
 async def comparar_archivos(file_actual: UploadFile = File(...), file_pasado: UploadFile = File(...)):
     content1 = await file_actual.read()
@@ -28,15 +49,22 @@ async def comparar_archivos(file_actual: UploadFile = File(...), file_pasado: Up
     ext2 = file_pasado.filename.split(".")[-1].lower()
 
     # Cargar con pandas según el tipo
+    # Cargar con pandas según el tipo
     if ext1 == "csv":
-        df_actual = pd.read_csv(BytesIO(content1))
+        sep1 = detectar_separador_robusto(content1)
+        df_actual = pd.read_csv(BytesIO(content1), sep=sep1, encoding='utf-8-sig', on_bad_lines='skip')
+        if len(df_actual.columns) == 1:  # si sigue detectando solo 1 columna
+            df_actual = pd.read_csv(BytesIO(content1), sep=';', encoding='utf-8-sig', on_bad_lines='skip')
     elif ext1 in ["xls", "xlsx"]:
         df_actual = pd.read_excel(BytesIO(content1))
     else:
         raise HTTPException(status_code=400, detail=f"Formato no soportado: {file_actual.filename}")
 
     if ext2 == "csv":
-        df_pasado = pd.read_csv(BytesIO(content2))
+        sep2 = detectar_separador_robusto(content2)
+        df_pasado = pd.read_csv(BytesIO(content2), sep=sep2, encoding='utf-8-sig', on_bad_lines='skip')
+        if len(df_pasado.columns) == 1:
+            df_pasado = pd.read_csv(BytesIO(content2), sep=';', encoding='utf-8-sig', on_bad_lines='skip')
     elif ext2 in ["xls", "xlsx"]:
         df_pasado = pd.read_excel(BytesIO(content2))
     else:
@@ -46,11 +74,13 @@ async def comparar_archivos(file_actual: UploadFile = File(...), file_pasado: Up
     df_actual.columns = df_actual.columns.str.lower().str.strip()
     df_pasado.columns = df_pasado.columns.str.lower().str.strip()
 
+    print(df_actual.columns)
+
     # Asegurar que existen 'placa' y 'tipo revision'
     if "placa" not in df_actual.columns or "tipo revision" not in df_actual.columns:
-        return {"error": "El archivo actual no tiene columnas 'placa' y 'tipo revision'"}
+        return {"error": "El archivo actual no tiene columnas 'placa' y 'tipo revision' 1"}
     if "placa" not in df_pasado.columns or "tipo revision" not in df_pasado.columns:
-        return {"error": "El archivo pasado no tiene columnas 'placa' y 'tipo revision'"}
+        return {"error": "El archivo pasado no tiene columnas 'placa' y 'tipo revision' 2"}
 
     # Comparar
     placas_actual = set(df_actual["placa"].astype(str).str.strip())
